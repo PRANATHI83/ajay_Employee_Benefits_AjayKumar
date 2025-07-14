@@ -8,7 +8,7 @@ services:
     restart: always
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: admin123
+      POSTGRES_PASSWORD: admin234
       POSTGRES_DB: new_employee_db
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -35,10 +35,10 @@ services:
       DB_USER: postgres
       DB_HOST: postgres
       DB_NAME: new_employee_db
-      DB_PASSWORD: admin123
+      DB_PASSWORD: admin234
       DB_PORT: 5432
       PORT: 3422
-      FRONTEND_URL: http://44.223.23.145:8043
+      FRONTEND_URL: http://13.201.36.187:8043
     volumes:
       - ./Backend/Uploads:/app/Uploads  # Persistent storage for uploads
 
