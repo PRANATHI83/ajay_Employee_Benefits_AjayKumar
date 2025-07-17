@@ -52,5 +52,14 @@ services:
     depends_on:
       - backend
 
+  hr_page:
+    build:
+      context: ./HR_page
+      dockerfile: Dockerfile
+    container_name: hr_container8
+    ports:
+      - "8044:80"
+    depends_on:
+      - backend
 volumes:
   pgdata:

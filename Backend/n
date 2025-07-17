@@ -1,0 +1,6 @@
+DB_USER=postgres
+DB_HOST=postgres
+DB_NAME=auth_db
+DB_PASSWORD=admin234
+DB_PORT=5432
+EMPLOYEE_PORT=3422
