@@ -1,247 +1,266 @@
-require('dotenv').config();
 const express = require('express');
 const { Pool } = require('pg');
-const path = require('path');
+const dotenv = require('dotenv');
 const cors = require('cors');
+const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
+
+dotenv.config();
+
 const app = express();
-const port = process.env.PORT || 3422;
 
-// PostgreSQL connection with retry logic
-const poolConfig = {
-  user: process.env.DB_USER || 'postgres',
-  host: process.env.DB_HOST || 'postgres',
-  database: process.env.DB_NAME || 'new_employee_db',
-  password: process.env.DB_PASSWORD || 'admin234',
-  port: process.env.DB_PORT || 5432,
-};
-
-const createPoolWithRetry = () => {
-  const pool = new Pool(poolConfig);
-  
-  // Test the connection
-  pool.query('SELECT 1')
-    .then(() => console.log('Connected to PostgreSQL'))
-    .catch(async (err) => {
-      console.error('Failed to connect to PostgreSQL:', err.message);
-      console.log('Retrying in 5 seconds...');
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      return createPoolWithRetry();
-    });
-  
-  return pool;
-};
-
-const pool = createPoolWithRetry();
-
-// Multer setup for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'Uploads/');
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  },
-});
-
-const uploadDir = path.join(__dirname, 'Uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-const upload = multer({
-  storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
-  fileFilter: (req, file, cb) => {
-    if (!file) {
-      return cb(null, true);
-    }
-    const filetypes = /pdf|jpg|jpeg|png/;
-    const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = filetypes.test(file.mimetype);
-    if (extname && mimetype) {
-      return cb(null, true);
-    }
-    cb(new Error('Only PDF, JPG, JPEG, and PNG files are allowed'));
-  },
-});
-
-// Middleware
+// CORS middleware
 app.use(cors({
   origin: [
-    process.env.FRONTEND_URL,
-    "http://13.201.36.187:3422",
-    "http://127.0.0.1:5500",
-    "http://13.201.36.187:5500",
-    "http://127.0.0.1:5501",
-    "http://127.0.0.1:5503",
-    "http://13.201.36.187:8043",
-    "http://13.201.36.187:8044",
-  ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
+    'http://13.233.148.208:8043', // Login Server
+    'http://13.233.148.208:3422', // Employee Server
+    'http://13.233.148.208:5500', // Live Server (Default)
+    'http://127.0.0.1:5500', // Live Server (IP)
+   // 'http://13.233.148.208:8044'  // Live Server (Alternate)
+  ]
 }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/Uploads', express.static(path.join(__dirname, 'Uploads')));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Route to handle file downloads
-app.get('/download/:filename', (req, res) => {
-  let filename = req.params.filename;
-  // Normalize filename to handle both forward and backslashes
-  filename = filename.replace(/\\/g, '/').split('/').pop();
-  const filePath = path.join(__dirname, 'Uploads', filename);
-  console.log('Requested file path:', filePath);
+// Multer configuration
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+}
 
-  fs.access(filePath, fs.constants.F_OK, (err) => {
-    if (err) {
-      console.error('File access error:', err);
-      return res.status(404).json({ error: 'File not found' });
-    }
-
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.sendFile(filePath, (err) => {
-      if (err) {
-        console.error('Error sending file:', err);
-        return res.status(500).json({ error: 'Error downloading file', details: err.message });
-      }
-      console.log(`File ${filename} sent successfully`);
-    });
-  });
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/');
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + '-' + file.originalname);
+  }
 });
 
-// Create requests table if not exists
+const upload = multer({
+  storage: storage,
+  fileFilter: (req, file, cb) => {
+    const validTypes = ['image/jpeg', 'image/png'];
+    if (!validTypes.includes(file.mimetype)) {
+      return cb(new Error('Only JPEG or PNG images are allowed'), false);
+    }
+    cb(null, true);
+  },
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+});
+
+// PostgreSQL connection
+const pool = new Pool({
+  user: process.env.DB_USER || 'postgres',
+  host: process.env.DB_HOST || 'postgres',
+  database: process.env.DB_NAME || 'auth_db',
+  password: process.env.DB_PASSWORD || 'admin234',
+  port: process.env.DB_PORT || 5432,
+});
+
+// Initialize database
 async function initializeDatabase() {
   try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS requests (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        email VARCHAR(255) NOT NULL,
-        emp_id VARCHAR(50) NOT NULL,
-        program VARCHAR(255) NOT NULL,
-        program_time VARCHAR(255),
-        request_date DATE NOT NULL,
-        status VARCHAR(50) NOT NULL DEFAULT 'Pending',
-        loan_type VARCHAR(100),
-        amount NUMERIC,
-        reason TEXT,
-        document_path VARCHAR(255)
+    const tableCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'employees'
       );
     `);
-    console.log('Database initialized');
+
+    const tableExists = tableCheck.rows[0].exists;
+
+    if (!tableExists) {
+      console.log('Creating employees table...');
+      await pool.query(`
+        CREATE TABLE employees (
+          id VARCHAR(7) PRIMARY KEY,
+          name VARCHAR(50) NOT NULL,
+          role VARCHAR(40) NOT NULL,
+          gender VARCHAR(10) NOT NULL,
+          dob DATE NOT NULL,
+          location VARCHAR(40) NOT NULL,
+          email VARCHAR(50) NOT NULL,
+          phone VARCHAR(10) NOT NULL,
+          join_date DATE NOT NULL,
+          experience INTEGER NOT NULL,
+          skills TEXT NOT NULL,
+          achievement TEXT NOT NULL,
+          profile_image VARCHAR(255)
+        );
+      `);
+      console.log('Employees table created successfully.');
+    } else {
+      // Check if profile_image column exists
+      const columnCheck = await pool.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.columns 
+          WHERE table_schema = 'public' 
+          AND table_name = 'employees' 
+          AND column_name = 'profile_image'
+        );
+      `);
+
+      if (!columnCheck.rows[0].exists) {
+        console.log('Adding profile_image column to employees table...');
+        await pool.query('ALTER TABLE employees ADD COLUMN profile_image VARCHAR(255);');
+        console.log('profile_image column added successfully.');
+      }
+    }
   } catch (err) {
-    console.error('Database initialization failed:', err);
+    console.error('Error initializing database:', err);
     process.exit(1);
   }
 }
 
-// Initialize the database
-initializeDatabase();
+// Database connection test
+pool.connect((err, client, release) => {
+  if (err) {
+    console.error('Database connection error:', err);
+    process.exit(1);
+  } else {
+    console.log('Connected to PostgreSQL database');
+    release();
+    initializeDatabase();
+  }
+});
 
-// API Routes
-
-// Create a new request
-app.post('/api/requests', upload.single('document'), async (req, res) => {
+// Health check
+app.get('/api/health', async (req, res) => {
   try {
-    const { name, email, empId, program, program_time, date, reason, loan_type, amount } = req.body;
-    const documentPath = req.file ? `Uploads/${req.file.filename}` : null;
+    await pool.query('SELECT 1');
+    res.status(200).json({ status: 'Database connection OK' });
+  } catch (err) {
+    console.error('Health check error:', err);
+    res.status(500).json({ error: 'Database connection failed', details: err.message });
+  }
+});
 
-    // Check for duplicate request for one-time programs
-    const oneTimePrograms = [
-      'Yoga and Meditation',
-      'Mental Health Support',
-      'Awareness Programs',
-      'Health Checkup Camps',
-      'Gym Membership',
-    ];
-    if (oneTimePrograms.includes(program)) {
-      const check = await pool.query(
-        'SELECT * FROM requests WHERE emp_id = $1 AND program = $2 AND status != $3',
-        [empId, program, 'Rejected']
-      );
-      if (check.rows.length) {
-        return res.status(400).json({
-          error: `You already have a ${check.rows[0].status.toLowerCase()} request for ${program}`,
-        });
-      }
+// Serve employee management page
+app.get('/employees', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'employees.html'));
+});
+
+// Track new users
+let lastChecked = new Date();
+app.get('/api/new-users', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT username, email, profile_image FROM users WHERE created_at > $1',
+      [lastChecked]
+    );
+    lastChecked = new Date();
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error in GET /api/new-users:', err);
+    res.status(500).json({ error: 'Server error', details: err.message });
+  }
+});
+
+// Get all users
+app.get('/api/all-users', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT username, email, profile_image FROM users ORDER BY id DESC'
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error in GET /api/all-users:', err);
+    res.status(500).json({ error: 'Server error', details: err.message });
+  }
+});
+
+// Add or update employee
+app.post('/api/add-employee', upload.single('profileImage'), async (req, res) => {
+  try {
+    const {
+      id, name, role, gender, dob, location, email, phone, joinDate, experience, skills, achievement
+    } = req.body;
+    const profileImage = req.file ? `uploads/${req.file.filename}` : null;
+
+    if (!id || !name || !role || !gender || !dob || !location || !email || !phone || !joinDate || !experience || !skills || !achievement) {
+      return res.status(400).json({ error: 'All fields are required' });
     }
 
-    const result = await pool.query(
-      `INSERT INTO requests (
-        name, email, emp_id, program, program_time, request_date, status, loan_type, amount, reason, document_path
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-      RETURNING *`,
-      [name, email, empId, program, program_time || null, date, 'Pending', loan_type || null, amount || null, reason || null, documentPath]
-    );
-    res.status(201).json(result.rows[0]);
+    if (!id.match(/^[A-Z]{3}[0-9]{4}$/)) {
+      return res.status(400).json({ error: 'Invalid Employee ID format' });
+    }
+
+    if (!email.match(/^[a-zA-Z][a-zA-Z0-9._-]*[a-zA-Z0-9]@astrolitetech\.com$/)) {
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+
+    if (!phone.match(/^[0-9]{10}$/)) {
+      return res.status(400).json({ error: 'Phone number must be 10 digits' });
+    }
+
+    const existing = await pool.query('SELECT id FROM employees WHERE id = $1', [id]);
+    if (existing.rows.length > 0) {
+      await pool.query(
+        `UPDATE employees SET 
+          name = $1, role = $2, gender = $3, dob = $4, location = $5, email = $6, 
+          phone = $7, join_date = $8, experience = $9, skills = $10, achievement = $11, 
+          profile_image = $12 
+        WHERE id = $13`,
+        [name, role, gender, dob, location, email, phone, joinDate, experience, skills, achievement, profileImage, id]
+      );
+      res.status(200).json({ message: 'Employee updated successfully', profile_image: profileImage });
+    } else {
+      await pool.query(
+        `INSERT INTO employees (id, name, role, gender, dob, location, email, phone, join_date, experience, skills, achievement, profile_image) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [id, name, role, gender, dob, location, email, phone, joinDate, experience, skills, achievement, profileImage]
+      );
+      res.status(201).json({ message: 'Employee added successfully', profile_image: profileImage });
+    }
   } catch (err) {
-    console.error('Error creating request:', err);
-    res.status(500).json({ error: 'Failed to create request', details: err.message });
+    console.error('Error in POST /api/add-employee:', err);
+    if (err.code === '23505') {
+      res.status(400).json({ error: 'Employee ID already exists' });
+    } else if (err.message.includes('Only JPEG or PNG')) {
+      res.status(400).json({ error: err.message });
+    } else {
+      res.status(500).json({ error: 'Server error', details: err.message });
+    }
   }
 });
 
-// Get all requests
-app.get('/api/requests', async (req, res) => {
+// Get all employees
+app.get('/api/employees', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM requests ORDER BY request_date DESC');
+    const result = await pool.query('SELECT * FROM employees');
     res.json(result.rows);
   } catch (err) {
-    console.error('Error fetching requests:', err);
-    res.status(500).json({ error: 'Failed to fetch requests' });
+    console.error('Error in GET /api/employees:', err);
+    res.status(500).json({ error: 'Server error', details: err.message });
   }
 });
 
-// Get requests by employee ID
-app.get('/api/requests/emp/:empId', async (req, res) => {
-  try {
-    const { empId } = req.params;
-    const result = await pool.query('SELECT * FROM requests WHERE emp_id = $1 ORDER BY request_date DESC', [empId]);
-    res.json(result.rows);
-  } catch (err) {
-    console.error('Error fetching requests by empId:', err);
-    res.status(500).json({ error: 'Failed to fetch requests' });
-  }
-});
-
-// Update request status
-app.put('/api/requests/:id', async (req, res) => {
+// Delete employee
+app.delete('/api/delete-employee/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
-    const result = await pool.query(
-      'UPDATE requests SET status = $1 WHERE id = $2 RETURNING *',
-      [status, id]
-    );
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Request not found' });
+    const result = await pool.query('DELETE FROM employees WHERE id = $1', [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Employee not found' });
     }
-    res.json(result.rows[0]);
+    res.json({ message: 'Employee deleted successfully' });
   } catch (err) {
-    console.error('Error updating request:', err);
-    res.status(500).json({ error: 'Failed to update request' });
+    console.error('Error in DELETE /api/delete-employee:', err);
+    res.status(500).json({ error: 'Server error', details: err.message });
   }
 });
 
-// Serve HTML pages
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'Frontend', 'index.html'));
-});
+// Default route for favicon to suppress 404
+app.get('/favicon.ico', (req, res) => res.status(204).end());
 
-app.get('/hr', (req, res) => {
-  res.sendFile(path.join(__dirname, 'HR_page', 'index.html'));
-});
-
-// Start server
-app.listen(port, () => {
-  console.log(`Server running on http://13.201.36.187:${port}`);
-});
-
-process.on('SIGINT', () => {
-  pool.end();
-  process.exit();
+const PORT = process.env.EMPLOYEE_PORT || 3422;
+app.listen(PORT, () => {
+  console.log(`Employee server running on port ${PORT}`);
 });

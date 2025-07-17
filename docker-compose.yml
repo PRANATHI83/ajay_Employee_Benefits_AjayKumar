@@ -38,7 +38,7 @@ services:
       DB_PASSWORD: admin234
       DB_PORT: 5432
       PORT: 3422
-      FRONTEND_URL: http://13.201.36.187:8043
+      FRONTEND_URL: http://13.233.148.208:8043
     volumes:
       - ./Backend/Uploads:/app/Uploads  # Persistent storage for uploads
 
@@ -49,16 +49,6 @@ services:
     container_name: frontend_container8
     ports:
       - "8043:80"
-    depends_on:
-      - backend
-
-  hr_page:
-    build:
-      context: ./HR_page
-      dockerfile: Dockerfile
-    container_name: hr_container8
-    ports:
-      - "8044:80"
     depends_on:
       - backend
 
